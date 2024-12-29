@@ -1,7 +1,6 @@
-﻿using System.Net;
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 
-namespace TDNS.DNSStorage;
+namespace TDNS.Entity;
 
 // DNS Header structure, 原项目中的 dns.h 中 `dnsheader` 结构的 C# 的小端实现 
 // [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -133,8 +132,8 @@ public struct DNSHeader
 
     public UInt16 flag;
 
-    // Number of entries in the question, answer, authority, and resource sections.
-    public UInt16 qdcount, ancount, nscount, arcount;
+    // count of entries in the question, answer, authority record, and additional record.
+    public UInt16 qucount, ancount, aucount, adcount;
 
     public Boolean qr
     {
@@ -179,14 +178,7 @@ public struct DNSHeader
         set => flag = (Byte)((flag & ~0b1111_0000_0000_0000) | (value << 12));
     }
 
-    public Int32 GetRecordCount() => ancount + nscount + arcount;
+    public Int32 GetRecordCount() => ancount + aucount + adcount;
 }
 
-[StructLayout(LayoutKind.Sequential, Pack = 1)]
-public struct DNSRecordHeader
-{
-    public UInt16 type;
-    public UInt16 @class;
-    public UInt32 ttl;
-    public UInt16 rdlen; // 是 resource data length 的简写
-}
+

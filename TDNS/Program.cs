@@ -16,7 +16,7 @@ class Program
     {
         Logger.Info("Hello and welcome to tdns, the teaching authoritative nameserver");
         var a = new Program();
-        var tasks = a.LaunchDNSServer([IPAddress.Any, IPAddress.Parse("10.29.145.246")]);
+        var tasks = a.LaunchDNSServer([IPAddress.Any, IPAddress.Parse("10.0.0.1")]);
         Task.WaitAll(tasks);
     }
 
@@ -31,8 +31,17 @@ class Program
             udpListener.Bind(new IPEndPoint(local, 53));
             Logger.Info($"Listening on UDP on {local}: 53");
             // 创建分离的任务
-            tasks.Add(Task.Run(()=> UDPTask(udpListener)));
+            var task = Task.Run(() => UDPTask(udpListener)).ContinueWith(t =>
+                {
+                    if (t.Exception == null) return;
+                    foreach (var ex in t.Exception.InnerExceptions)
+                        Console.WriteLine($"Exception: {ex.Message}");
+                    
+                }, TaskContinuationOptions.OnlyOnFaulted
+            );
+            tasks.Add(task);
         }
+
         Logger.Info("所有监听器创建完成");
         return tasks;
     }
@@ -40,17 +49,25 @@ class Program
     private void UDPTask(Socket socket)
     {
         var buffer = new Byte[512];
-        EndPoint remoteEndPoint = socket.LocalEndPoint;
+        EndPoint remoteEndPoint = new IPEndPoint(IPAddress.Any, 0);
         while (true)
         {
             var msgLen = socket.ReceiveFrom(buffer, ref remoteEndPoint);
-            Logger.Info($"Received {msgLen} bytes");
+            Logger.Info($"Received from {remoteEndPoint}, {msgLen} bytes");
             var msgReader = new DNSMessageReader(buffer.Take(msgLen).ToArray());
             var dnsHeader = msgReader.dnsHeader;
+            var qname = msgReader.qname;
             var recordList = msgReader.recordList;
             Logger.Info(
-                $"{dnsHeader.qdcount} questions, {dnsHeader.ancount} answers, {dnsHeader.nscount} authority, {dnsHeader.arcount} additional");
+                $"{dnsHeader.qucount} questions, {dnsHeader.ancount} answers, {dnsHeader.aucount} authority, {dnsHeader.adcount} additional");
             Logger.Info($"{recordList.Count}");
+            Logger.Info($"收到的 qname: {qname.ToReadableString()}");
+            var ednsOpts = msgReader.GetEDNSOpts();
+            if (ednsOpts == null) continue;
+            foreach (var option in ednsOpts.options)
+            {
+                Logger.Info($"EDNS option: {option.Item1}, {BitConverter.ToString(option.Item2)}");
+            }
         }
     }
 }

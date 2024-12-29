@@ -1,6 +1,8 @@
-﻿using System.Net;
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using TDNS.DNSStorage;
+using TDNS.Entity;
+using TDNS.Entity.RecordContent;
+using TDNS.Utils;
 
 namespace TDNS.DNSMessages;
 
@@ -9,7 +11,10 @@ public class DNSMessageReader
     private ByteArrayReader reader;
     private static Byte POINTER_FLAG = 0b1100_0000;
     public DNSHeader dnsHeader;
-    public List<DNSRecord> recordList;
+    public DNSName qname;
+    public DNSType qtype;
+    public DNSClass qclass;
+    public List<DNSRecord> recordList = [];
 
     public DNSMessageReader(Byte[] bytes)
     {
@@ -18,20 +23,20 @@ public class DNSMessageReader
         reader = new ByteArrayReader(bytes);
         dnsHeader = GetDNSHeader();
         // 解析 Question Section
-        if (dnsHeader.qdcount != 0)
+        if (dnsHeader.qucount != 0)
         {
-            var dnsName = GetDNSName();
-            var qtype = (DNSType)reader.GetUInt16();
-            var qclass = (DNSClass)reader.GetUInt16();
+            qname = GetDNSName();
+            qtype = (DNSType)reader.GetUInt16();
+            qclass = (DNSClass)reader.GetUInt16();
         }
 
         // 解析 Answer AUTHORITY ADDITIONAL Section
-        recordList = new List<DNSRecord>();
         var recordCount = dnsHeader.GetRecordCount();
         for (var i = 0; i < recordCount; i++)
         {
             var place = i < dnsHeader.ancount ? DNSRecordPlace.ANSWER :
-                i < dnsHeader.ancount + dnsHeader.nscount ? DNSRecordPlace.AUTHORITY : DNSRecordPlace.ADDITIONAL;
+                i < dnsHeader.ancount + dnsHeader.aucount ? DNSRecordPlace.AUTHORITY : DNSRecordPlace.ADDITIONAL;
+            var name = GetDNSName();
             var header = new DNSRecordHeader
             {
                 type = reader.GetUInt16(),
@@ -44,14 +49,36 @@ public class DNSMessageReader
         }
     }
 
+    public EDNSOpts? GetEDNSOpts()
+    {
+        if (dnsHeader.adcount == 0 || recordList.Count == 0) return null;
+        var opts = new EDNSOpts();
+        foreach (var record in recordList)
+        {
+            // 找到位置在 Additional Section 且 type 为 OPT 的 Record
+            if (record is not { place: DNSRecordPlace.ADDITIONAL, header.type: (UInt16)DNSType.OPT }) continue;
+            opts.payloadSize = record.header.@class;
+            var ttl = record.header.ttl;
+            opts.extRcode = (Byte)((ttl >> 24) & 0xFF);
+            opts.version = (Byte)((ttl >> 16) & 0xFF);
+            opts.extFlags = (UInt16)(ttl & 0xFFFF);
+            // optRC for optiona Record Content // TODO: 为什么用 as 进行转化就不可以呢?
+            var optRC = new OPTRecordContent(record.content);
+            opts.options = optRC.ParseOptions();
+            return opts;
+        }
+
+        return null;
+    }
+
     private DNSHeader GetDNSHeader() => new()
     {
         id = reader.GetUInt16(),
         flag = reader.GetUInt16(),
-        qdcount = reader.GetUInt16(),
+        qucount = reader.GetUInt16(),
         ancount = reader.GetUInt16(),
-        nscount = reader.GetUInt16(),
-        arcount = reader.GetUInt16()
+        aucount = reader.GetUInt16(),
+        adcount = reader.GetUInt16()
     };
 
     private DNSName GetDNSName()
@@ -82,47 +109,5 @@ public class DNSMessageReader
         }
 
         return dnsName;
-    }
-}
-
-class ByteArrayReader(Byte[] bytes)
-{
-    private Byte[] content = bytes;
-
-    private Int32 position;
-
-    public Int32 Position
-    {
-        get => position;
-        set
-        {
-            if (value < 0 || value > content.Length)
-                throw new ArgumentOutOfRangeException($"{nameof(Position)}", "position 不能小于 0 或大于 content.Length");
-            position = value;
-        }
-    }
-
-    public Byte GetUInt8() => content[Position++];
-
-    public UInt16 GetUInt16()
-    {
-        // 要用 `ToInt16` 而不能用 `ToUInt16`不然解析的不对, 下面那个 32 位的同理
-        var value = BitConverter.ToInt16(content, Position);
-        Position += 2;
-        return (UInt16)IPAddress.NetworkToHostOrder(value);
-    }
-
-    public UInt32 GetUInt32()
-    {
-        var value = BitConverter.ToInt32(content, Position);
-        Position += 4;
-        return (UInt32)IPAddress.NetworkToHostOrder(value);
-    }
-
-    public Byte[] GetByteArray(Int32 length)
-    {
-        var value = content.Skip(Position).Take(length).ToArray();
-        Position += length;
-        return value;
     }
 }

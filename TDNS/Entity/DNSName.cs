@@ -43,7 +43,7 @@ public class DNSLabel
 
 public class DNSName
 {
-    public List<DNSLabel> labels = new();
+    public List<DNSLabel> labels = [];
 
     // @fmt:off
     public DNSName AddLabel(DNSLabel label) { labels.Add(label); return this; }
